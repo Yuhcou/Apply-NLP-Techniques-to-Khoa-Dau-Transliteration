@@ -18,9 +18,9 @@ CSV_PATH = "quoc_ngu_to_khoa_dau/data/all-vietnamese-syllables-encoded.csv"
 INPUT_TEXT_PATH = "quoc_ngu_to_khoa_dau/test_input.txt"
 
 # Định nghĩa các kiến trúc
-class KhoaDauCNN(nn.Module):
+class KhoaDauCNNLarge(nn.Module):
     def __init__(self, input_vocab_size, output_vocab_size, embed_dim=128, hidden_dim=512):
-        super(KhoaDauCNN, self).__init__()
+        super(KhoaDauCNNLarge, self).__init__()
         self.embedding = nn.Embedding(input_vocab_size, embed_dim)
         self.conv1 = nn.Conv1d(embed_dim, hidden_dim, kernel_size=3, padding=1)
         self.conv2 = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
@@ -67,11 +67,11 @@ class Evaluator:
         self.rev_kd = {v: k for k, v in self.kd_v.items()}
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        if m_type == "large": self.model = KhoaDauCNN(len(self.qn_v), len(self.kd_v)).to(self.device)
+        if m_type == "large": self.model = KhoaDauCNNLarge(len(self.qn_v), len(self.kd_v)).to(self.device)
         elif m_type == "small": self.model = KhoaDauCNNSmall(len(self.qn_v), len(self.kd_v)).to(self.device)
         else: self.model = KhoaDauCNNNano(len(self.qn_v), len(self.kd_v)).to(self.device)
         
-        path = f"quoc_ngu_to_khoa_dau/khoa_dau_cnn{'_' + m_type if m_type != 'large' else ''}.pth"
+        path = f"quoc_ngu_to_khoa_dau/khoa_dau_cnn_{m_type}.pth"
         if not os.path.exists(path): self.model = None; return
         self.model.load_state_dict(torch.load(path, map_location=self.device))
         self.model.eval()
@@ -126,7 +126,7 @@ def run_performance_test():
         batch_preds = ev.batch_predict(df['original'].astype(str).tolist())
         acc = sum(1 for p, t in zip(batch_preds, df['encoded'].astype(str).tolist()) if p == t) / len(df)
         
-        results.append({"name": m_type.upper(), "acc": acc*100, "time": t_time, "size": os.path.getsize(f"quoc_ngu_to_khoa_dau/khoa_dau_cnn{'_' + m_type if m_type != 'large' else ''}.pth")/1024})
+        results.append({"name": m_type.upper(), "acc": acc*100, "time": t_time, "size": os.path.getsize(f"quoc_ngu_to_khoa_dau/khoa_dau_cnn_{m_type}.pth")/1024})
 
     print(f"\n{'MODEL':<12} | {'ACCURACY':<10} | {'TIME (ms)':<12} | {'SIZE (KB)'}")
     print("-" * 55)

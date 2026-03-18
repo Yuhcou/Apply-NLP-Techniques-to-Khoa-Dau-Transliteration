@@ -6,12 +6,12 @@ import os
 
 # --- SAO CHÉP LẠI CÁC THÔNG SỐ VÀ KIẾN TRÚC ---
 MAX_LEN = 7
-MODEL_PATH = "quoc_ngu_to_khoa_dau/khoa_dau_cnn.pth"
+MODEL_PATH = "quoc_ngu_to_khoa_dau/khoa_dau_cnn_large.pth"
 VOCAB_PATH = "quoc_ngu_to_khoa_dau/vocab.pth"
 
-class KhoaDauCNN(nn.Module):
+class KhoaDauCNNLarge(nn.Module):
     def __init__(self, input_vocab_size, output_vocab_size, embed_dim=128, hidden_dim=256):
-        super(KhoaDauCNN, self).__init__()
+        super(KhoaDauCNNLarge, self).__init__()
         self.embedding = nn.Embedding(input_vocab_size, embed_dim)
         self.conv1 = nn.Conv1d(embed_dim, hidden_dim, kernel_size=3, padding=1)
         self.conv2 = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
@@ -47,7 +47,7 @@ class TransliterativeInference:
         
         # Load model
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = KhoaDauCNN(len(self.qn_vocab), len(self.kd_vocab)).to(self.device)
+        self.model = KhoaDauCNNLarge(len(self.qn_vocab), len(self.kd_vocab)).to(self.device)
         self.model.load_state_dict(torch.load(MODEL_PATH, map_location=self.device))
         self.model.eval()
 
