@@ -1,8 +1,7 @@
 import torch
 import os
 import pandas as pd
-
-VOCAB_PATH = "quoc_ngu_to_khoa_dau/vocab.pth"
+from .config import VOCAB_PATH
 
 def build_vocab(df):
     """Xây dựng từ điển từ dữ liệu thô."""
