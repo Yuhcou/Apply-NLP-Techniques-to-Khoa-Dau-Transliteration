@@ -19,13 +19,18 @@ Dự án này tập trung vào việc áp dụng các kỹ thuật Xử lý ngô
 - AI (CNN) chỉ thực sự phát huy sức mạnh tốc độ khi xử lý Batch cực lớn và khâu tiền xử lý được tối ưu hóa bằng ngôn ngữ bậc thấp (C++/Rust).
 - Điểm yếu của AI trong bài toán này là chi phí đóng gói Tensor (Overhead) lớn hơn chi phí tính toán logic.
 
-## 2. Module: Khoa Đẩu -> Quốc ngữ (Kế hoạch)
-- **Thách thức:** Bài toán **1-nhiều** (Đồng âm khác hình: c/k/q -> e012). Rule-based không thể xử lý.
-- **Giải pháp:** Sử dụng AI (Language Model / Seq2Seq) để dựa vào ngữ cảnh chọn từ đúng.
+## 2. Module: Khoa Đẩu -> Quốc ngữ (Đang triển khai)
+- **Thách thức:** Bài toán **1-nhiều** (Đồng âm khác hình: c/k/q -> e012). Cần ngữ cảnh để chọn từ đúng.
+- **Trạng thái Dữ liệu (Hoàn thành):** 
+    - Đã xây dựng bộ Dataset khổng lồ từ 29 shards ngữ liệu tiếng Việt (Wikipedia, Báo chí).
+    - Quy mô: **~3.5 - 4 triệu câu** đã được làm sạch và chuẩn hóa.
+    - Chuẩn hóa: Toàn bộ dữ liệu đã được đưa về **Chuẩn mới** (dấu ở nguyên âm chính: hòa, tùy, thúy).
+    - Phân chia: Đã có sẵn `train.csv`, `val.csv`, `test.csv` (tỷ lệ 90/5/5).
+- **Giải pháp tiếp theo:** Sử dụng kiến trúc **Seq2Seq (Transformer)** để huấn luyện trên tập dữ liệu này.
 
 ## 3. Nhật ký cập nhật
-- **17/03/2026:** 
-    - Dọn dẹp project, xây dựng thành công 3 phiên bản mô hình 1D-CNN.
-    - Triển khai Batch Inference tối ưu hóa tốc độ AI gấp 30 lần so với tuần tự.
-    - Tìm ra giới hạn vật lý của AI trên CPU so với Rule-based.
-    - Hoàn thiện bộ công cụ đánh giá (`evaluate_model.py`) công bằng và chính xác.
+- **19/03/2026:**
+    - Hoàn thành thu thập và giải nén 29 shards dữ liệu Parquet từ HuggingFace.
+    - Xây dựng thành công `data_maker.py` (v2) xử lý hàng loạt dữ liệu quy mô lớn.
+    - Đồng bộ hóa toàn bộ dự án (bao gồm cả file từ điển âm tiết) sang **Chuẩn đặt dấu mới**.
+    - Đóng gói thành công Dataset cuối cùng sẵn sàng cho huấn luyện AI.

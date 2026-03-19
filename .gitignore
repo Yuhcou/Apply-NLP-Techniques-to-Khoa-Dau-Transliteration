@@ -154,3 +154,14 @@ cython_debug/
 *.h5
 *.weights
 *.pt
+*.onnx
+
+# Project-specific heavy data
+khoa_dau_to_quoc_ngu/data/raw_corpus/
+khoa_dau_to_quoc_ngu/data/processed/
+khoa_dau_to_quoc_ngu/data/*.csv
+khoa_dau_to_quoc_ngu/data/*.parquet
+quoc_ngu_to_khoa_dau/data/*.csv
+quoc_ngu_to_khoa_dau/weights/
+test_input.txt
+test_comparison.txt
