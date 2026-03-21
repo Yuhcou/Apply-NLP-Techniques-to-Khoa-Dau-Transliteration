@@ -1,0 +1,162 @@
+import os
+import torch
+import torch.nn as nn
+from tqdm import tqdm
+import pandas as pd
+
+from src.config import *
+from src.vocab_utils import CharTokenizer, PAD_IDX
+from src.data_utils import get_dataloader
+from src.models import Seq2SeqTransformer, create_mask
+
+def train_epoch(model, optimizer, criterion, dataloader, device):
+    model.train()
+    losses = 0
+    
+    for batch in tqdm(dataloader, desc="Huấn luyện"):
+        # Chuyển đổi tensor sang [seq_len, batch_size] theo yêu cầu của nn.Transformer
+        src = batch['src'].transpose(0, 1).to(device)
+        tgt = batch['tgt'].transpose(0, 1).to(device)
+        
+        # tgt_input bỏ token cuối cùng (EOS)
+        tgt_input = tgt[:-1, :]
+        # tgt_out bỏ token đầu tiên (SOS) làm target
+        tgt_out = tgt[1:, :]
+        
+        src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt_input, PAD_IDX, device)
+        
+        logits = model(src, tgt_input, src_mask, tgt_mask, src_padding_mask, tgt_padding_mask, src_padding_mask)
+        
+        optimizer.zero_grad()
+        loss = criterion(logits.reshape(-1, logits.shape[-1]), tgt_out.reshape(-1))
+        loss.backward()
+        
+        # Gradient Clipping
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
+        optimizer.step()
+        
+        if torch.isnan(loss) or torch.isinf(loss):
+            print("CẢNH BÁO: Phát hiện Loss là NaN hoặc Inf. Dừng huấn luyện.")
+            return None
+        
+        losses += loss.item()
+    
+    return losses / len(dataloader)
+
+def evaluate(model, criterion, dataloader, device):
+    model.eval()
+    losses = 0
+    with torch.no_grad():
+        for batch in tqdm(dataloader, desc="Đánh giá"):
+            src = batch['src'].transpose(0, 1).to(device)
+            tgt = batch['tgt'].transpose(0, 1).to(device)
+            
+            tgt_input = tgt[:-1, :]
+            tgt_out = tgt[1:, :]
+            
+            src_mask, tgt_mask, src_padding_mask, tgt_padding_mask = create_mask(src, tgt_input, PAD_IDX, device)
+            
+            logits = model(src, tgt_input, src_mask, tgt_mask, src_padding_mask, tgt_padding_mask, src_padding_mask)
+            loss = criterion(logits.reshape(-1, logits.shape[-1]), tgt_out.reshape(-1))
+            
+            if torch.isnan(loss) or torch.isinf(loss):
+                continue
+                
+            losses += loss.item()
+            
+    return losses / len(dataloader)
+
+def main(data_limit=None):
+    # Cấu hình thiết bị
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
+        
+    print(f"Đang sử dụng thiết bị: {device}")
+    
+    # 1. Chuẩn bị Tokenizer
+    tokenizer = CharTokenizer()
+    if not tokenizer.load(VOCAB_PATH):
+        print("Không tìm thấy từ điển hoặc cần xây dựng mới. Đang nạp toàn bộ dữ liệu để đảm bảo bao phủ 100% ký tự...")
+        all_texts = []
+        for path in [TRAIN_DATA_PATH, VAL_DATA_PATH, TEST_DATA_PATH]:
+            if os.path.exists(path):
+                df_temp = pd.read_csv(path).dropna(subset=['khoa_dau', 'quoc_ngu'])
+                all_texts.extend(df_temp['khoa_dau'].tolist())
+                all_texts.extend(df_temp['quoc_ngu'].tolist())
+        
+        tokenizer.build_vocab(all_texts)
+        tokenizer.save(VOCAB_PATH)
+    else:
+        print(f"Đã tải từ điển. Kích thước: {tokenizer.vocab_size} ký tự")
+
+    # 2. Tải DataLoader (với giới hạn nếu có)
+    print("Đang chuẩn bị DataLoader...")
+    train_dataloader = get_dataloader(TRAIN_DATA_PATH, tokenizer, BATCH_SIZE, shuffle=True, limit=data_limit)
+    # Val set cũng giới hạn tương ứng để nhanh
+    val_limit = int(data_limit * 0.1) if data_limit else None
+    val_dataloader = get_dataloader(VAL_DATA_PATH, tokenizer, BATCH_SIZE, shuffle=False, limit=val_limit)
+    
+    # 3. Khởi tạo mô hình
+    model = Seq2SeqTransformer(
+        num_encoder_layers=NUM_ENCODER_LAYERS,
+        num_decoder_layers=NUM_DECODER_LAYERS,
+        emb_size=D_MODEL,
+        nhead=N_HEAD,
+        vocab_size=tokenizer.vocab_size,
+        dim_feedforward=DIM_FEEDFORWARD,
+        dropout=DROPOUT
+    ).to(device)
+    
+    model_path = os.path.join(WEIGHTS_DIR, "best_model.pth")
+    if os.path.exists(model_path):
+        print(f"-> Phát hiện checkpoint tại {model_path}. Đang nạp để tiếp tục huấn luyện...")
+        model.load_state_dict(torch.load(model_path, map_location=device))
+    
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
+    criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
+    
+    best_val_loss = float('inf')
+    patience_counter = 0
+    
+    for epoch in range(1, NUM_EPOCHS + 1):
+        print(f"\n[Epoch {epoch}/{NUM_EPOCHS}]")
+        train_loss = train_epoch(model, optimizer, criterion, train_dataloader, device)
+        val_loss = evaluate(model, criterion, val_dataloader, device)
+        
+        print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+        
+        # Dọn dẹp VRAM sau mỗi epoch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            patience_counter = 0
+            model_path = os.path.join(WEIGHTS_DIR, "best_model.pth")
+            torch.save(model.state_dict(), model_path)
+            print(f"-> Đã lưu mô hình tốt nhất (Loss: {val_loss:.4f})")
+        else:
+            patience_counter += 1
+            if patience_counter >= PATIENCE:
+                print("Early Stopping!")
+                break
+    
+    # Tự động đánh giá sau khi train xong
+    print("\n" + "="*50)
+    print("BẮT ĐẦU QUÁ TRÌNH ĐÁNH GIÁ CUỐI CÙNG...")
+    from evaluate import run_evaluation
+    run_evaluation(os.path.join(WEIGHTS_DIR, "best_model.pth"), TEST_DATA_PATH, num_samples=100)
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--limit", type=int, default=None, help="Giới hạn số câu để train thử")
+    args = parser.parse_args()
+    
+    # Nếu đang ở trên máy cục bộ, hãy để limit khoảng 50000 - 100000 để thấy kết quả nhanh
+    main(data_limit=args.limit)

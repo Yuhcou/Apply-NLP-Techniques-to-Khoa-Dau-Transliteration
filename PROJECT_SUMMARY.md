@@ -29,6 +29,13 @@ Dự án này tập trung vào việc áp dụng các kỹ thuật Xử lý ngô
 - **Giải pháp tiếp theo:** Sử dụng kiến trúc **Seq2Seq (Transformer)** để huấn luyện trên tập dữ liệu này.
 
 ## 3. Nhật ký cập nhật
+- **20/03/2026:**
+    - Hoàn thành thiết kế và lập trình kiến trúc Seq2Seq Transformer (Encoder-Decoder) bằng PyTorch.
+    - Xây dựng thành công hệ thống Character-level Tokenizer tối ưu cho bài toán từ vựng nhỏ và chống lỗi OOV hiệu quả.
+    - Hoàn thiện kịch bản huấn luyện (`train.py`) với đầy đủ kỹ thuật Masking, Checkpointing và Early Stopping.
+    - **Kết quả Prototype (100k mẫu):** Val Loss đạt 0.14, CER đạt 0.21 sau 50 Epoch (tính cả resume). Pipeline hoạt động cực kỳ ổn định. **ĐÃ PASS TIÊU CHÍ CHUYỂN GIAI ĐOẠN.**
+    - **Sẵn sàng cho Cloud:** Đã tối ưu hóa RAM (dùng `tolist()`), dọn dẹp VRAM (`empty_cache`) và đóng gói `Cloud_Notebook.ipynb`.
+    - **Hướng tiếp theo:** Huấn luyện trên toàn bộ 4 triệu mẫu tại môi trường Cloud để đạt CER < 0.05.
 - **19/03/2026:**
     - Hoàn thành thu thập và giải nén 29 shards dữ liệu Parquet từ HuggingFace.
     - Xây dựng thành công `data_maker.py` (v2) xử lý hàng loạt dữ liệu quy mô lớn.
