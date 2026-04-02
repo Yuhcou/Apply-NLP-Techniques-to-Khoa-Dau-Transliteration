@@ -146,5 +146,107 @@
 - `src/data_utils.py`: Đã được chuẩn hóa, hỗ trợ `limit` và `drop_last`.
 
 ---
-**KẾT THÚC SESSION: Pipeline đã sạch lỗi, mô hình đã thông minh, dữ liệu đã sẵn sàng scale-up.**
+## 12. Giải thích kiến trúc Mô hình Seq2Seq Transformer (Session 30/03/2026)
+
+### A. Phân tích lớp `PositionalEncoding`
+Lớp này giải quyết vấn đề cốt lõi của Transformer: **Thiếu tính tuần tự**. Vì Transformer xử lý toàn bộ câu cùng lúc (thay vì từng từ như RNN), nó không biết từ nào đứng trước, từ nào đứng sau. `PositionalEncoding` thêm một "tín hiệu vị trí" vào vector nhúng (embedding).
+
+**Giải thích từng dòng:**
+1. `den = torch.exp(-torch.arange(0, emb_size, 2) * math.log(10000) / emb_size)`: Tính toán mẫu số cho công thức Sin/Cos ($10000^{2i/d_{model}}$). Việc dùng `exp` và `log` giúp tính toán ổn định hơn về mặt số học.
+2. `pos = torch.arange(0, maxlen).reshape(maxlen, 1)`: Tạo một cột chứa các chỉ số vị trí từ $0$ đến $maxlen-1$.
+3. `pos_embedding[:, 0::2] = torch.sin(pos * den)`: Áp dụng hàm `sin` cho các chỉ số chẵn (0, 2, 4...) của vector embedding.
+4. `pos_embedding[:, 1::2] = torch.cos(pos * den)`: Áp dụng hàm `cos` cho các chỉ số lẻ (1, 3, 5...) của vector embedding.
+5. `pos_embedding = pos_embedding.unsqueeze(-2)`: Thêm một chiều để tương thích với cấu trúc `[seq_len, batch_size, emb_size]` của PyTorch Transformer.
+6. `self.register_buffer('pos_embedding', pos_embedding)`: Đăng ký mảng này là một `buffer`. Nó sẽ được lưu cùng model nhưng **không** được cập nhật trọng số bởi Optimizer (vì vị trí là cố định).
+
+### B. Các thành phần khác trong `models.py`
+- `TokenEmbedding`: Chuyển các ID ký tự thành vector không gian nhiều chiều. Có nhân thêm $\sqrt{d_{model}}$ để cân bằng biên độ với Positional Encoding.
+- `Seq2SeqTransformer`: Lớp bao ngoài kết nối Encoder và Decoder.
+- `generate_square_subsequent_mask`: Mặt nạ quan trọng nhất cho Decoder, ngăn nó nhìn thấy các ký tự ở tương lai trong quá trình huấn luyện.
+
+## 14. Nâng cấp Module Quốc ngữ -> Khoa Đẩu (Session 01/04/2026)
+
+### A. Vấn đề hiện tại
+- Bộ quy tắc `rule_based.py` đang áp dụng một cách "mù quáng" cho mọi chuỗi ký tự đầu vào.
+- Các từ ngoại ngữ (Python, AI, Windows) bị biến đổi sai quy tắc, làm mất đi tính nguyên bản của văn bản hỗn hợp.
+- Điều này gây khó khăn cho việc xây dựng ứng dụng thực tế nơi người dùng thường xuyên dùng xen kẽ tiếng Việt và tiếng Anh.
+
+### B. Giải pháp - Dictionary-based Filtering
+- **Mục tiêu:** Chỉ chuyển tự những từ thực sự là tiếng Việt. Giữ nguyên các từ khác.
+- **Kỹ thuật:**
+    1.  Tải danh sách ~18,000 âm tiết tiếng Việt từ `all-vietnamese-syllables.txt` vào một `set` để tra cứu nhanh (O(1)).
+    2.  Trước khi chuyển tự, chuẩn hóa từ về dạng không dấu (nhưng giữ nguyên âm gốc như â, ê, ô...) để khớp với từ điển.
+    3.  Sử dụng Regex hoặc logic tách từ để phân biệt giữa từ (word) và các ký tự đặc biệt/dấu câu.
+    4.  Hàm `encode_with_dictionary(text)` sẽ là điểm vào chính mới cho ứng dụng.
+
+### D. Kết luận & Suy luận Kỹ thuật (01/04/2026)
+1. **Rule-based & Dictionary Filtering:** Việc lọc qua từ điển 18,000 âm tiết trước khi chuyển tự giúp giải quyết triệt để vấn đề "nhiễu" từ ngoại ngữ, tăng độ tin cậy của hệ thống trong môi trường thực tế.
+2. **CNN Depth vs Width:** Qua thực nghiệm (Femto, Pico, Tiny), chúng ta chứng minh được rằng việc duy trì số lớp (`num_layers=3`) quan trọng hơn độ rộng (`hidden_dim`). Việc tăng độ sâu giúp mô hình học các tổ hợp quy tắc ký tự tiếng Việt tốt hơn dù nơ-ron ít hơn.
+3. **Dropout-free Policy:** Trong bài toán chuyển tự 1-1 trên tập dữ liệu đóng (closed-set), Dropout là không cần thiết và thậm chí gây hại. Việc loại bỏ Dropout giúp mô hình hội tụ nhanh hơn và đạt độ chính xác gần như tuyệt đối (99.96%).
+4. **Standardization:** Việc dọn dẹp mã "legacy" và chuẩn hóa tên gọi (Tiny, Small, Large) giúp dự án chuyên nghiệp và dễ bảo trì hơn cho các pha tích hợp sau này.
+
+---
+## 15. Module: Khoa Đẩu to Quốc Ngữ - Giai đoạn 3 (Scale-up)
+*Dự kiến: Transformer 4M samples trên Cloud.*
+
+### Mục tiêu:
+Xây dựng báo cáo kỹ thuật chi tiết về dự án "Ứng dụng kỹ thuật NLP vào chuyển tự chữ Khoa Đẩu".
+
+### Cấu trúc dự kiến của Báo cáo:
+1.  **Mở đầu:** Giới thiệu về chữ Khoa Đẩu, mục tiêu và ý nghĩa của đồ án.
+2.  **Cơ sở lý thuyết:**
+    *   Tổng quan về NLP và bài toán Transliteration.
+    *   Giới thiệu các kiến trúc: CNN (cho bài toán 1-1) và Transformer (cho bài toán 1-nhiều).
+    *   Kỹ thuật Tokenization (Character-level).
+3.  **Phân tích và Thiết kế hệ thống:**
+    *   Quy trình xử lý dữ liệu (Crawl, Clean, Normalize - Chuẩn dấu mới).
+    *   Thiết kế kiến trúc mô hình (Encoder-Decoder, Attention mechanism).
+4.  **Thực nghiệm và Kết quả:**
+    *   Kết quả Module Quốc ngữ -> Khoa Đẩu (So sánh Rule-based vs CNN).
+    *   Kết quả Module Khoa Đẩu -> Quốc ngữ (Quá trình train, metrics CER/Loss, ví dụ thực tế).
+    *   Các lỗi thường gặp và cách tối ưu (Memory, GPU, Python overhead).
+5.  **Kết luận và Hướng phát triển:**
+    *   Đánh giá mức độ hoàn thành.
+    *   Đề xuất cải tiến (Beam Search nâng cao, tích hợp Web/Mobile).
+
+### Chiến lược thực hiện:
+*   **Bước 1:** Tổng hợp số liệu từ `PROJECT_SUMMARY.md` và các file kết quả train.
+*   **Bước 2:** Viết chi tiết phần **Cơ sở lý thuyết** và **Thực nghiệm** (đây là phần mạnh nhất của dự án hiện tại).
+### Bước 3: Hoàn thiện các phần còn lại và định dạng Markdown/LaTeX.
+
+## 16. Tiếp tục tối ưu Module Quốc ngữ -> Khoa Đẩu (02/04/2026)
+
+### A. Vấn đề hiện tại:
+1.  **Thiếu Dictionary Filtering trong AI Inference:** Hiện tại `inference.py` đang chuyển tự mọi từ, bao gồm cả từ ngoại ngữ/số, dẫn đến kết quả sai lệch.
+2.  **Mã nguồn phân mảnh:** Các file `train_tiny.py`, `train_small.py`, `train_large.py` có cấu trúc lặp lại, khó bảo trì.
+3.  **Cần đánh giá khách quan:** So sánh các model AI và Rule-based trên tập dữ liệu kiểm thử thực tế.
+
+### B. Kế hoạch thực hiện:
+1.  **Hợp nhất scripts huấn luyện:** Tạo `train.py` duy nhất hỗ trợ tham số `--model [tiny|small|large]`.
+2.  **Nâng cấp AI Inference:** Tích hợp `Dictionary-based Filtering` tương tự như Rule-based để bảo vệ từ ngoại ngữ.
+3.  **Mở rộng Evaluate:** Xây dựng script so sánh hiệu năng (Accuracy, Latency, Size) giữa các phương pháp.
+
+### C. Suy luận Kỹ thuật:
+- Việc tích hợp từ điển vào AI Inference giúp model "biết mình biết ta": chỉ xử lý những gì nó được học (tiếng Việt) và giữ nguyên những gì nó không biết (ngoại ngữ). Điều này quan trọng hơn việc cố gắng bắt model học mọi thứ.
+- Hợp nhất code giúp giảm "nợ kỹ thuật" (technical debt) và làm cho workflow chuyên nghiệp hơn.
+
+## 17. Thử nghiệm kiến trúc mới (Experimental Models - 02/04/2026)
+
+### A. Mục tiêu:
+Khám phá giới hạn tối thiểu của mô hình và ảnh hưởng của độ sâu (depth) vs độ rộng cửa sổ (kernel size).
+
+### B. Cấu hình thử nghiệm:
+1.  **Model 1 - Super Tiny (Ultra):**
+    - Kiến trúc: 3 Layers, Kernel 3 (giống Tiny).
+    - Thay đổi: Giảm `embed_dim` từ 12 -> 8, `hidden_dim` từ 24 -> 16.
+    - Mục tiêu: Xem liệu với dung lượng siêu nhỏ (có thể < 20KB), mô hình có duy trì được độ chính xác > 99.9% không.
+2.  **Model 2 - Shallow & Wide (Shallow):**
+    - Kiến trúc: 2 Layers, Kernel 5.
+    - Thay đổi: Giảm số lớp nhưng tăng vùng nhận cảm (Receptive Field) từ 7 lên 9 ký tự.
+    - Mục tiêu: Kiểm tra giả thuyết về việc "nhìn rộng hơn" với ít lớp hơn có giúp sửa lỗi lặp ký tự (o -> oo) hay không.
+
+### C. Cải tiến Pipeline:
+- **Early Stopping:** Dừng huấn luyện nếu `val_loss` không cải thiện sau 20 epochs để tiết kiệm tài nguyên.
+- **Dynamic Models:** Cập nhật `models.py` để hỗ trợ truyền tham số `kernel_size`.
+
 

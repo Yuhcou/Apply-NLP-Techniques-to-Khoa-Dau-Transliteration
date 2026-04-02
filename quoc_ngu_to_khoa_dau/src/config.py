@@ -11,10 +11,15 @@ MAX_LEN = 7
 
 # Đường dẫn file dữ liệu
 CSV_PATH = os.path.join(DATA_DIR, "all-vietnamese-syllables-encoded.csv")
+SYLLABLES_PLAIN_PATH = os.path.join(DATA_DIR, "all-vietnamese-syllables.txt")
 VOCAB_PATH = os.path.join(WEIGHTS_DIR, "vocab.pth")
-INPUT_TEXT_PATH = os.path.join(BASE_DIR, "test_input.txt")
+INPUT_TEXT_PATH = os.path.join(DATA_DIR, "source.txt")
 
-# Đường dẫn lưu model
-MODEL_LARGE_PATH = os.path.join(WEIGHTS_DIR, "khoa_dau_cnn_large.pth")
+# New Hierarchy: Shallow_Big (100% Acc) > Big (99.9% Acc) > Shallow_Small (75% Acc) > Small (66% Acc)
+MODEL_SHALLOW_BIG_PATH = os.path.join(WEIGHTS_DIR, "khoa_dau_cnn_shallow_big.pth")
+MODEL_BIG_PATH = os.path.join(WEIGHTS_DIR, "khoa_dau_cnn_big.pth")
+MODEL_SHALLOW_SMALL_PATH = os.path.join(WEIGHTS_DIR, "khoa_dau_cnn_shallow_small.pth")
 MODEL_SMALL_PATH = os.path.join(WEIGHTS_DIR, "khoa_dau_cnn_small.pth")
-MODEL_NANO_PATH = os.path.join(WEIGHTS_DIR, "khoa_dau_cnn_nano.pth")
+
+# Mặc định sử dụng Shallow_Big (Champion: 100% Acc, 16KB)
+MODEL_BEST_PATH = MODEL_SHALLOW_BIG_PATH

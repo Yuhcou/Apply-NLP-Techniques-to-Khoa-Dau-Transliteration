@@ -112,32 +112,54 @@ def main(data_limit=None):
         dropout=DROPOUT
     ).to(device)
     
-    model_path = os.path.join(WEIGHTS_DIR, "best_model.pth")
-    if os.path.exists(model_path):
-        print(f"-> Phát hiện checkpoint tại {model_path}. Đang nạp để tiếp tục huấn luyện...")
-        model.load_state_dict(torch.load(model_path, map_location=device))
-    
     optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.CrossEntropyLoss(ignore_index=PAD_IDX)
     
+    # 4. Nạp Checkpoint nếu có (Hỗ trợ Resume)
+    start_epoch = 1
     best_val_loss = float('inf')
+    model_path = os.path.join(WEIGHTS_DIR, "best_model.pth")
+    checkpoint_path = os.path.join(WEIGHTS_DIR, "checkpoint.pth")
+    
+    if os.path.exists(checkpoint_path):
+        print(f"-> Phát hiện checkpoint tại {checkpoint_path}. Đang nạp để tiếp tục...")
+        checkpoint = torch.load(checkpoint_path, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_val_loss = checkpoint['best_val_loss']
+        print(f"-> Tiếp tục từ Epoch {start_epoch} (Best Val Loss trước đó: {best_val_loss:.4f})")
+    elif os.path.exists(model_path):
+        print(f"-> Không thấy checkpoint đầy đủ, nhưng thấy best_model.pth. Đang nạp trọng số...")
+        model.load_state_dict(torch.load(model_path, map_location=device))
+
     patience_counter = 0
     
-    for epoch in range(1, NUM_EPOCHS + 1):
+    for epoch in range(start_epoch, NUM_EPOCHS + 1):
         print(f"\n[Epoch {epoch}/{NUM_EPOCHS}]")
         train_loss = train_epoch(model, optimizer, criterion, train_dataloader, device)
         val_loss = evaluate(model, criterion, val_dataloader, device)
         
+        if train_loss is None: break # Lỗi NaN/Inf
+
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
         
         # Dọn dẹp VRAM sau mỗi epoch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             
+        # Lưu checkpoint hàng epoch (để Resume)
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'best_val_loss': best_val_loss,
+        }, checkpoint_path)
+
+        # Lưu model tốt nhất (để Inference)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
-            model_path = os.path.join(WEIGHTS_DIR, "best_model.pth")
             torch.save(model.state_dict(), model_path)
             print(f"-> Đã lưu mô hình tốt nhất (Loss: {val_loss:.4f})")
         else:

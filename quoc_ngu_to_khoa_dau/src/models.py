@@ -1,53 +1,47 @@
 import torch
 import torch.nn as nn
 
-class KhoaDauCNNLarge(nn.Module):
-    def __init__(self, input_vocab_size, output_vocab_size, embed_dim=128, hidden_dim=512):
-        super(KhoaDauCNNLarge, self).__init__()
+class KhoaDauCNN(nn.Module):
+    def __init__(self, input_vocab_size, output_vocab_size, num_layers=3, embed_dim=128, hidden_dim=512, kernel_size=3, dropout=0.0):
+        super(KhoaDauCNN, self).__init__()
         self.embedding = nn.Embedding(input_vocab_size, embed_dim)
-        self.conv1 = nn.Conv1d(embed_dim, hidden_dim, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(0.1)
+        
+        layers = []
+        in_channels = embed_dim
+        padding = kernel_size // 2
+        
+        for _ in range(num_layers):
+            layers.append(nn.Conv1d(in_channels, hidden_dim, kernel_size=kernel_size, padding=padding))
+            layers.append(nn.ReLU())
+            in_channels = hidden_dim
+            
+        self.conv_blocks = nn.Sequential(*layers)
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else nn.Identity()
         self.fc = nn.Linear(hidden_dim, output_vocab_size)
 
     def forward(self, x):
-        x = self.embedding(x).transpose(1, 2)
-        x = self.relu(self.conv1(x))
-        x = self.relu(self.conv2(x))
-        x = self.relu(self.conv3(x))
-        x = x.transpose(1, 2)
+        # x: (batch, seq_len)
+        x = self.embedding(x).transpose(1, 2)  # (batch, embed_dim, seq_len)
+        x = self.conv_blocks(x)                # (batch, hidden_dim, seq_len)
+        x = x.transpose(1, 2)                  # (batch, seq_len, hidden_dim)
         return self.fc(self.dropout(x))
 
-class KhoaDauCNNSmall(nn.Module):
-    def __init__(self, input_vocab_size, output_vocab_size, embed_dim=64, hidden_dim=256):
-        super(KhoaDauCNNSmall, self).__init__()
-        self.embedding = nn.Embedding(input_vocab_size, embed_dim)
-        self.conv1 = nn.Conv1d(embed_dim, hidden_dim, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
-        self.conv3 = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
-        self.relu = nn.ReLU()
-        self.fc = nn.Linear(hidden_dim, output_vocab_size)
+    @staticmethod
+    def big(input_vocab_size, output_vocab_size):
+        """3 Layers, Kernel 3, Dims 8/16. (Formerly Micro/Ultra)"""
+        return KhoaDauCNN(input_vocab_size, output_vocab_size, num_layers=3, embed_dim=8, hidden_dim=16, kernel_size=3)
 
-    def forward(self, x):
-        x = self.embedding(x).transpose(1, 2)
-        x = self.relu(self.conv1(x))
-        x = self.relu(self.conv2(x))
-        x = self.relu(self.conv3(x))
-        return self.fc(x.transpose(1, 2))
+    @staticmethod
+    def small(input_vocab_size, output_vocab_size):
+        """3 Layers, Kernel 3, Dims 4/8. (Formerly Femto/Atomic)"""
+        return KhoaDauCNN(input_vocab_size, output_vocab_size, num_layers=3, embed_dim=4, hidden_dim=8, kernel_size=3)
 
-class KhoaDauCNNNano(nn.Module):
-    def __init__(self, input_vocab_size, output_vocab_size, embed_dim=16, hidden_dim=48):
-        super(KhoaDauCNNNano, self).__init__()
-        self.embedding = nn.Embedding(input_vocab_size, embed_dim)
-        self.conv1 = nn.Conv1d(embed_dim, hidden_dim, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=3, padding=1)
-        self.relu = nn.ReLU()
-        self.fc = nn.Linear(hidden_dim, output_vocab_size)
+    @staticmethod
+    def shallow_big(input_vocab_size, output_vocab_size):
+        """2 Layers, Kernel 5, Dims 8/16. (Formerly Nano/Shallow_Small - CHAMPION)"""
+        return KhoaDauCNN(input_vocab_size, output_vocab_size, num_layers=2, embed_dim=8, hidden_dim=16, kernel_size=5)
 
-    def forward(self, x):
-        x = self.embedding(x).transpose(1, 2)
-        x = self.relu(self.conv1(x))
-        x = self.relu(self.conv2(x))
-        return self.fc(x.transpose(1, 2))
+    @staticmethod
+    def shallow_small(input_vocab_size, output_vocab_size):
+        """2 Layers, Kernel 5, Dims 4/8. (Formerly Pico/Shallow_Tiny)"""
+        return KhoaDauCNN(input_vocab_size, output_vocab_size, num_layers=2, embed_dim=4, hidden_dim=8, kernel_size=5)

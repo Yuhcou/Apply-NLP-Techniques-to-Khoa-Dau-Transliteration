@@ -1,4 +1,7 @@
 import unicodedata
+import os
+import re
+from .config import SYLLABLES_PLAIN_PATH
 
 # --- Bảng luật ---
 RULES_3 = {
@@ -226,3 +229,52 @@ def encode_custom(text):
         i += 1
 
     return output
+
+
+# ============ DICTIONARY-BASED FILTERING ============
+
+_SYLLABLES_SET = None
+
+def load_syllables():
+    global _SYLLABLES_SET
+    if _SYLLABLES_SET is not None:
+        return _SYLLABLES_SET
+
+    _SYLLABLES_SET = set()
+    if os.path.exists(SYLLABLES_PLAIN_PATH):
+        with open(SYLLABLES_PLAIN_PATH, 'r', encoding='utf-8') as f:
+            for line in f:
+                s = line.strip().lower()
+                if s:
+                    _SYLLABLES_SET.add(s)
+    else:
+        print(f"Warning: Syllables file not found at {SYLLABLES_PLAIN_PATH}")
+    return _SYLLABLES_SET
+
+def is_vietnamese(word):
+    # Chuẩn hóa về NFC và lower case để so khớp với từ điển (chứa cả dấu)
+    clean_word = unicodedata.normalize("NFC", word.lower())
+    syllables = load_syllables()
+    return clean_word in syllables
+
+def encode_safe(text):
+    """
+    Chuyển tự có chọn lọc: Chỉ chuyển những từ là tiếng Việt,
+    giữ nguyên từ nước ngoài, số và dấu câu.
+    """
+    # Tách từ (giữ nguyên khoảng trắng và dấu câu)
+    # \w+ khớp với từ, [^\w\s] khớp với dấu câu, \s+ khớp với khoảng trắng
+    tokens = re.findall(r'\w+|[^\w\s]|\s+', text)
+    result = []
+
+    for token in tokens:
+        # Nếu là một từ (chứa chữ cái/số)
+        if re.match(r'\w+', token):
+            if is_vietnamese(token):
+                result.append(encode_custom(token))
+            else:
+                result.append(token)  # Giữ nguyên từ nước ngoài/số
+        else:
+            result.append(token)  # Giữ nguyên dấu câu, khoảng trắng
+
+    return "".join(result)
