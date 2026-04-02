@@ -22,10 +22,12 @@ Dự án tập trung nghiên cứu và thực hiện chuyển tự (transliterat
 ## 2. Module: Khoa Đẩu -> Quốc ngữ (Đang triển khai)
 - **Đặc điểm:** Bài toán ánh xạ 1-nhiều (Đồng âm khác hình), yêu cầu xử lý ngữ cảnh để xác định từ vựng chính xác.
 - **Giải pháp:** Kiến trúc mạng nơ-ron Sequence-to-Sequence dựa trên Transformer (Character-level).
-- **Trạng thái:** Hoàn thành giai đoạn Prototype với 100,000 mẫu (CER ~ 0.21. Đang chuẩn bị huấn luyện quy mô lớn trên 4 triệu mẫu.
+- **Trạng thái:** Hoàn thành giai đoạn Prototype với 100,000 mẫu (CER ~ 0.21). Đã chuẩn bị đầy đủ 4 triệu mẫu dữ liệu (Chuẩn mới) và script huấn luyện cho Cloud.
+- **Cập nhật mới:** Hệ thống suy luận nâng cấp với Giao diện V2 (SequenceMatcher, Sentence Splitting) giúp tăng độ chính xác của dấu câu và từ ngoại ngữ.
 
 ## 3. Nhật ký cập nhật kỹ thuật
 - **02/04/2026:**
-    - Thực thi thuật toán Dictionary-only tối ưu hóa GPU, đạt hiệu suất xử lý ~600,000 từ/giây.
-    - Chuẩn hóa hệ thống phân cấp mô hình (Model Hierarchy): **Shallow_Big, Big, Shallow_Small, Small**.
-    - Tích hợp cơ chế Dừng sớm (Early Stopping) và đánh giá tham số (Parameter Count) vào quy trình huấn luyện và kiểm định.
+    - **Module 1:** Thực thi thuật toán Dictionary-only tối ưu hóa GPU, đạt hiệu suất xử lý ~600,000 từ/giây. Chuẩn hóa Model Hierarchy.
+    - **Module 2:** Hoàn thiện `inference.py` tích hợp Rule-based và AI Transformer. Áp dụng Sequence Alignment để hiển thị từ thiếu và highlight lỗi chuẩn xác.
+    - **Data:** Xác nhận và gộp thành công tập dữ liệu 4 triệu mẫu (Chuẩn mới) cho Phase 3.
+    - **Documentation:** Lý giải kỹ thuật về "Punctuation Padding" và cơ chế bảo vệ ranh giới âm tiết cho Transformer.

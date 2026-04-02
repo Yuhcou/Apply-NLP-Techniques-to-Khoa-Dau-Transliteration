@@ -2,7 +2,7 @@
 
 ## 1. Các lỗi đã gặp và Cách xử lý
 - **Dữ liệu:** File CSV chứa giá trị `NaN` ở cuối file gây lỗi `TypeError` khi build vocab. -> **Xử lý:** Luôn dùng `.dropna()` hoặc `str(x) if pd.notnull(x) else ""`.
-- **Mô hình:** Lỗi `size mismatch` khi load `state_dict` do định nghĩa class trong file `evaluate` lệch so với file `train`. -> **Xử lý:** Đồng bộ hóa kiến trúc (số lớp, hidden_dim) giữa hai file.
+- **Mô hình:** Lỗi `size mismatch` khi load `state_dict` do định nghĩa class trong file `evaluate` lệch so với file `train`. -> **Xử lý:** Đã đồng bộ hóa kiến trúc (số lớp, hidden_dim) giữa các file.
 - **NLP:** Regex cơ bản `[a-zA-Z]` bỏ sót các ký tự tiếng Việt có dấu, khiến model trả về text gốc. -> **Xử lý:** Sử dụng dải Regex đầy đủ hoặc kiểm tra `c.isalpha()`.
 - **Ngữ cảnh:** Dấu câu (., /) dính liền vào từ làm hỏng quy tắc "kết thúc từ" (final locking). -> **Xử lý:** Tách tuyệt đối dấu câu ra trước khi đưa vào mô hình hoặc Rule-based.
 
@@ -79,7 +79,7 @@
     2. Chạy lại `python train.py --limit 1000`.
 ### E. Phát hiện lỗi nghiêm trọng (Red Flag) - Phase 1.1
 - **Vấn đề:** Mô hình không thể copy các ký tự Latin (ví dụ: "smitinand" -> "hilton mary"). 
-- **Suy luận:** Đây không phải lỗi do thiếu dữ liệu hay thiếu Epoch, mà là **lỗi logic pipeline**. Nếu model không học được phép copy đơn giản sau 60 epoch với 1,000 mẫu, thì tín hiệu gradient đang bị sai hoặc dữ liệu Input/Target đang bị lệch pha.
+- **Suy luận:** Đây không phải lỗi do thiếu dữ liệu hay thiếu Epoch, mà là **lỗi logic pipeline**. Nếu model không học được phép copy đơn giản sau 60 epoch with 1,000 mẫu, thì tín hiệu gradient đang bị sai hoặc dữ liệu Input/Target đang bị lệch pha.
 - **Kế hoạch kiểm tra (Debugging):**
     1. Kiểm tra `CharTokenizer` (SOS, EOS, PAD indexes).
     2. Kiểm tra `TranslationDataset` trong `data_utils.py` xem có trả về đúng cặp câu không.
@@ -142,7 +142,7 @@
 - **Môi trường:** Đã sẵn sàng với `Cloud_Notebook.ipynb` và `requirements.txt`.
 
 #### 4. Trạng thái Hệ thống
-- `inference.py`: Đã sẵn sàng, tích hợp Beam Search, chạy tốt với trọng số `best_model.pth` hiện tại.
+- `inference.py`: Đã nâng cấp lên V2, tích hợp Beam Search, UI so sánh thông minh bằng SequenceMatcher.
 - `src/data_utils.py`: Đã được chuẩn hóa, hỗ trợ `limit` và `drop_last`.
 
 ---
@@ -156,11 +156,11 @@ Lớp này giải quyết vấn đề cốt lõi của Transformer: **Thiếu t�
 2. `pos = torch.arange(0, maxlen).reshape(maxlen, 1)`: Tạo một cột chứa các chỉ số vị trí từ $0$ đến $maxlen-1$.
 3. `pos_embedding[:, 0::2] = torch.sin(pos * den)`: Áp dụng hàm `sin` cho các chỉ số chẵn (0, 2, 4...) của vector embedding.
 4. `pos_embedding[:, 1::2] = torch.cos(pos * den)`: Áp dụng hàm `cos` cho các chỉ số lẻ (1, 3, 5...) của vector embedding.
-5. `pos_embedding = pos_embedding.unsqueeze(-2)`: Thêm một chiều để tương thích với cấu trúc `[seq_len, batch_size, emb_size]` của PyTorch Transformer.
+5. `pos_embedding = pos_embedding.unsqueeze(-2)`: Thêm một chiều để tương thích with cấu trúc `[seq_len, batch_size, emb_size]` của PyTorch Transformer.
 6. `self.register_buffer('pos_embedding', pos_embedding)`: Đăng ký mảng này là một `buffer`. Nó sẽ được lưu cùng model nhưng **không** được cập nhật trọng số bởi Optimizer (vì vị trí là cố định).
 
 ### B. Các thành phần khác trong `models.py`
-- `TokenEmbedding`: Chuyển các ID ký tự thành vector không gian nhiều chiều. Có nhân thêm $\sqrt{d_{model}}$ để cân bằng biên độ với Positional Encoding.
+- `TokenEmbedding`: Chuyển các ID ký tự thành vector không gian nhiều chiều. Có nhân thêm $\sqrt{d_{model}}$ để cân bằng biên độ with Positional Encoding.
 - `Seq2SeqTransformer`: Lớp bao ngoài kết nối Encoder và Decoder.
 - `generate_square_subsequent_mask`: Mặt nạ quan trọng nhất cho Decoder, ngăn nó nhìn thấy các ký tự ở tương lai trong quá trình huấn luyện.
 
@@ -175,7 +175,7 @@ Lớp này giải quyết vấn đề cốt lõi của Transformer: **Thiếu t�
 - **Mục tiêu:** Chỉ chuyển tự những từ thực sự là tiếng Việt. Giữ nguyên các từ khác.
 - **Kỹ thuật:**
     1.  Tải danh sách ~18,000 âm tiết tiếng Việt từ `all-vietnamese-syllables.txt` vào một `set` để tra cứu nhanh (O(1)).
-    2.  Trước khi chuyển tự, chuẩn hóa từ về dạng không dấu (nhưng giữ nguyên âm gốc như â, ê, ô...) để khớp với từ điển.
+    2.  Trước khi chuyển tự, chuẩn hóa từ về dạng không dấu (nhưng giữ nguyên âm gốc như â, ê, ô...) để khớp with từ điển.
     3.  Sử dụng Regex hoặc logic tách từ để phân biệt giữa từ (word) và các ký tự đặc biệt/dấu câu.
     4.  Hàm `encode_with_dictionary(text)` sẽ là điểm vào chính mới cho ứng dụng.
 
@@ -239,14 +239,47 @@ Khám phá giới hạn tối thiểu của mô hình và ảnh hưởng của �
 1.  **Model 1 - Super Tiny (Ultra):**
     - Kiến trúc: 3 Layers, Kernel 3 (giống Tiny).
     - Thay đổi: Giảm `embed_dim` từ 12 -> 8, `hidden_dim` từ 24 -> 16.
-    - Mục tiêu: Xem liệu với dung lượng siêu nhỏ (có thể < 20KB), mô hình có duy trì được độ chính xác > 99.9% không.
+    - Mục tiêu: Xem liệu with dung lượng siêu nhỏ (có thể < 20KB), mô hình có duy trì được độ chính xác > 99.9% không.
 2.  **Model 2 - Shallow & Wide (Shallow):**
     - Kiến trúc: 2 Layers, Kernel 5.
     - Thay đổi: Giảm số lớp nhưng tăng vùng nhận cảm (Receptive Field) từ 7 lên 9 ký tự.
-    - Mục tiêu: Kiểm tra giả thuyết về việc "nhìn rộng hơn" với ít lớp hơn có giúp sửa lỗi lặp ký tự (o -> oo) hay không.
+    - Mục tiêu: Kiểm tra giả thuyết về việc "nhìn rộng hơn" with ít lớp hơn có giúp sửa lỗi lặp ký tự (o -> oo) hay không.
 
 ### C. Cải tiến Pipeline:
 - **Early Stopping:** Dừng huấn luyện nếu `val_loss` không cải thiện sau 20 epochs để tiết kiệm tài nguyên.
 - **Dynamic Models:** Cập nhật `models.py` để hỗ trợ truyền tham số `kernel_size`.
 
+## 18. Lý giải Kỹ thuật: Tại sao tách Dấu câu (Punctuation Padding) trong Module 2? (Session 02/04/2026)
 
+Mặc dù sử dụng Tokenizer cấp ký tự (Character-level), việc thêm khoảng trắng quanh dấu câu (`học .` thay vì `học.`) trong dữ liệu huấn luyện của Module 2 (Khoa Đẩu -> Quốc ngữ) là bắt buộc vì các lý do sau:
+
+### A. Ràng buộc từ Logic tạo dữ liệu (Pipeline Constraints)
+Script `data_maker.py` sử dụng hàm `.split()` để tách văn bản thành các từ và kiểm tra trong `all-vietnamese-syllables.txt`. 
+- Nếu dấu câu dính liền (ví dụ: `ngôn.`), từ điển sẽ không nhận diện được âm tiết đó.
+- Hệ quả: Từ đó sẽ bị coi là ngoại ngữ và không được chuyển sang chữ Khoa Đẩu, tạo ra dữ liệu huấn luyện sai lệch (Target là Quốc ngữ nhưng Input không phải Khoa Đẩu hoàn chỉnh).
+
+### B. Tín hiệu Ranh giới Âm tiết (Universal Stop Signal)
+Chữ Khoa Đẩu có các ký tự "Khóa đuôi" đặc biệt (ví dụ: `n` ở cuối âm tiết là `e025`, khác with `n` ở đầu/giữa là `e019`).
+- Khoảng trắng đóng vai trò là một **tín hiệu dừng (Stop Signal)** cực kỳ nhất quán. 
+- Nếu không có khoảng trắng, mô hình Transformer phải học hàng chục tổ hợp chuyển trạng thái thưa thớt (ví dụ: `n` + `.`, `n` + `,`, `n` + `)`...) thay vì chỉ học một quy luật duy nhất: `n` + `space`. Điều này làm tăng độ phức tạp của bài toán và giảm tốc độ hội tụ.
+
+### C. Giảm nhiễu cho cơ chế Attention (Identity Mapping)
+Việc cô lập dấu câu giúp cơ chế Attention dễ dàng tách biệt phần "chuyển tự" (Khoa Đẩu -> Quốc ngữ) và phần "copy" (giữ nguyên dấu câu). Điều này ngăn chặn sự nhiễu loạn giữa vector nhúng (embedding) của ký tự cuối từ và dấu câu, đảm bảo mô hình không dự đoán sai dấu thanh của các từ cuối câu.
+
+**Kết luận:** Punctuation Padding giúp dữ liệu huấn luyện nhất quán, mô hình hội tụ nhanh hơn và đạt độ chính xác cao hơn. Việc xóa khoảng trắng thừa sẽ được xử lý ở bước hậu xử lý (Post-processing) trong Inference.
+
+## 19. Nâng cấp Giao diện Suy luận V2 (Transformer Inference) (Session 02/04/2026)
+
+### A. Mục tiêu
+Tạo giao diện người dùng chuyên nghiệp cho Module 2, cho phép kiểm chứng quy trình: **Quốc ngữ -> (Rule-based) -> Khoa Đẩu -> (AI) -> Quốc ngữ**.
+
+### B. Tính năng chính
+1.  **Double Translation:** Gõ Quốc ngữ, hệ thống tự chuyển sang Khoa Đẩu (trung gian) rồi dùng AI dịch ngược lại Quốc ngữ.
+2.  **SequenceMatcher Alignment:** Sử dụng thuật toán so sánh chuỗi để highlight lỗi thông minh, chống hiện tượng tô đỏ "sai dây chuyền" khi AI dịch thiếu/thừa từ.
+3.  **Missing Word Markers:** Tự động chèn ký hiệu `[ từ_bị_thiếu ]` màu xanh để chỉ ra chính xác vị trí AI bỏ sót từ.
+4.  **Sentence Splitting:** Dịch theo từng câu để đảm bảo giữ nguyên dấu câu và tránh mô hình bị quá tải ngữ cảnh.
+
+### C. Logic Kỹ thuật
+- Tích hợp `difflib.SequenceMatcher` để căn chỉnh word-level giữa bản gốc và bản AI.
+- Sử dụng `quoc_ngu_to_khoa_dau/src/rule_based.py` làm cầu nối tạo Input Khoa Đẩu chuẩn.
+- Tự động thêm/xóa "dấu chấm giả" để AI không bị cắt cụt từ cuối câu.

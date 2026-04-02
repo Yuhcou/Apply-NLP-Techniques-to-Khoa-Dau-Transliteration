@@ -146,5 +146,3 @@ khoa_dau_to_quoc_ngu/data/processed/
 khoa_dau_to_quoc_ngu/data/*.csv
 khoa_dau_to_quoc_ngu/data/*.parquet
 quoc_ngu_to_khoa_dau/data/*.csv
-test_input.txt
-test_comparison.txt
