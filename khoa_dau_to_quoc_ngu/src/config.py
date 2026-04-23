@@ -15,7 +15,7 @@ TEST_DATA_PATH = os.path.join(DATA_DIR, "test.csv")
 VOCAB_PATH = os.path.join(WEIGHTS_DIR, "vocab.json")
 
 # Hyperparameters tối ưu cho 3050 Ti (4GB VRAM)
-MAX_LEN = 128          
+MAX_LEN = 192          
 BATCH_SIZE = 128       # Tăng batch size để ổn định gradient
 D_MODEL = 256          
 N_HEAD = 8

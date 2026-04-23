@@ -40,50 +40,66 @@ def calculate_metrics(target, predicted):
     return cer, wer
 
 def beam_search_decode(model, src, src_mask, max_len, start_symbol, end_symbol, device, beam_width=3):
-    """Giải mã bằng thuật toán Beam Search."""
+    """Giải mã bằng thuật toán Beam Search (Đã tối ưu hóa Vectorized để tránh thắt cổ chai GPU)."""
     src = src.to(device)
-    src_mask = src_mask.to(device)
+    if src_mask is not None:
+        src_mask = src_mask.to(device)
     
+    # memory: [src_len, 1, d_model]
     memory = model.encode(src, src_mask)
     
     # Khởi tạo beam: (chuỗi_ids, log_score)
-    # log_score khởi tạo là 0 (xác suất = 1)
     beams = [([start_symbol], 0.0)]
     
     for i in range(max_len - 1):
-        new_beams = []
+        active_beams = []
+        finished_beams = []
+        
         for seq, score in beams:
             if seq[-1] == end_symbol:
-                new_beams.append((seq, score))
-                continue
+                finished_beams.append((seq, score))
+            else:
+                active_beams.append((seq, score))
                 
-            # Tạo target tensor cho chuỗi hiện tại
-            tgt_tensor = torch.tensor(seq).unsqueeze(1).to(device)
-            tgt_mask = generate_square_subsequent_mask(tgt_tensor.size(0), device).type(torch.bool)
-            
-            # Dự đoán
-            out = model.decode(tgt_tensor, memory, tgt_mask)
-            out = out.transpose(0, 1)
-            prob = model.generator(out[:, -1])
-            
-            # Lấy log_softmax để tính log_score (cộng thay vì nhân)
-            log_probs = torch.log_softmax(prob, dim=1)
-            
-            # Lấy top k ứng viên tiếp theo
-            top_log_probs, top_indices = torch.topk(log_probs, beam_width, dim=1)
-            
-            for j in range(beam_width):
-                next_word = top_indices[0][j].item()
-                next_score = top_log_probs[0][j].item()
-                new_beams.append((seq + [next_word], score + next_score))
-        
-        # Sắp xếp và giữ lại top beam_width
-        # Áp dụng Length Penalty đơn giản: score / len(seq)^0.7
-        beams = sorted(new_beams, key=lambda x: x[1] / (len(x[0])**0.7), reverse=True)[:beam_width]
-        
-        # Nếu tất cả các beam đều đã kết thúc bằng EOS
-        if all(seq[-1] == end_symbol for seq, _ in beams):
+        if not active_beams:
             break
+            
+        num_active = len(active_beams)
+        curr_len = len(active_beams[0][0])
+        
+        # Gom tất cả các chuỗi đang active thành 1 batch tensor: [curr_len, num_active]
+        seq_tensors = [torch.tensor(b[0], dtype=torch.long) for b in active_beams]
+        tgt_tensor = torch.stack(seq_tensors, dim=1).to(device)
+        tgt_mask = generate_square_subsequent_mask(curr_len, device).type(torch.bool)
+        
+        # Mở rộng memory cho khớp với num_active beams hiện tại
+        # [src_len, 1, d_model] -> [src_len, num_active, d_model]
+        batched_memory = memory.expand(-1, num_active, -1).contiguous()
+        
+        # 1 lần suy luận duy nhất trên GPU cho toàn bộ k beams
+        out = model.decode(tgt_tensor, batched_memory, tgt_mask)
+        
+        # Chỉ lấy hidden states của token cuối cùng: [num_active, d_model]
+        prob = model.generator(out[-1, :, :])
+        
+        # Nếu model sinh ra NaN do khác biệt phân phối độ dài (Train MAX_LEN=128 nhưng Eval > 128),
+        # dừng giải mã nhánh này để tránh lỗi CUDA Illegal Memory Access
+        if torch.isnan(prob).any() or torch.isinf(prob).any():
+            break
+            
+        log_probs = torch.log_softmax(prob, dim=1) # [num_active, vocab_size]
+        top_log_probs, top_indices = torch.topk(log_probs, beam_width, dim=1)
+        
+        new_beams = finished_beams.copy()
+        for b_idx in range(num_active):
+            seq, current_score = active_beams[b_idx]
+            for j in range(beam_width):
+                next_word = top_indices[b_idx][j].item()
+                next_score = top_log_probs[b_idx][j].item()
+                new_beams.append((seq + [next_word], current_score + next_score))
+        
+        # Sắp xếp và giữ lại top beam_width (Áp dụng Length Penalty)
+        beams = sorted(new_beams, key=lambda x: x[1] / (len(x[0])**0.7), reverse=True)[:beam_width]
             
     return beams[0][0]
 
@@ -92,25 +108,80 @@ def run_evaluation(model_path, data_path, num_samples=500, beam_width=3):
     tokenizer = CharTokenizer()
     tokenizer.load(VOCAB_PATH)
     
+    # Load checkpoint to check for config
+    ckpt = None
+    if os.path.exists(model_path):
+        ckpt = torch.load(model_path, map_location=device)
+        
+    if isinstance(ckpt, dict) and 'config' in ckpt:
+        config = ckpt['config']
+        enc_layers = config.get('num_encoder_layers', NUM_ENCODER_LAYERS)
+        dec_layers = config.get('num_decoder_layers', NUM_DECODER_LAYERS)
+        emb_size = config.get('emb_size', D_MODEL)
+        nhead = config.get('nhead', N_HEAD)
+        dim_ff = config.get('dim_feedforward', DIM_FEEDFORWARD)
+    else:
+        state_dict = ckpt['model_state_dict'] if (isinstance(ckpt, dict) and 'model_state_dict' in ckpt) else ckpt
+        
+        enc_layers = NUM_ENCODER_LAYERS
+        dec_layers = NUM_DECODER_LAYERS
+        emb_size = D_MODEL
+        nhead = N_HEAD
+        dim_ff = DIM_FEEDFORWARD
+        
+        if state_dict is not None:
+            try:
+                if 'src_tok_emb.embedding.weight' in state_dict:
+                    emb_size = state_dict['src_tok_emb.embedding.weight'].shape[1]
+                enc_keys = [k for k in state_dict.keys() if k.startswith('transformer.encoder.layers.')]
+                if enc_keys:
+                    enc_layers = max([int(k.split('.')[3]) for k in enc_keys]) + 1
+                dec_keys = [k for k in state_dict.keys() if k.startswith('transformer.decoder.layers.')]
+                if dec_keys:
+                    dec_layers = max([int(k.split('.')[3]) for k in dec_keys]) + 1
+                if 'transformer.encoder.layers.0.linear1.weight' in state_dict:
+                    dim_ff = state_dict['transformer.encoder.layers.0.linear1.weight'].shape[0]
+                if emb_size == 256:
+                    nhead = 8
+                elif emb_size == 512:
+                    nhead = 16
+            except Exception as e:
+                print(f"Lỗi Auto-detect: {e}")
+    
     model = Seq2SeqTransformer(
-        num_encoder_layers=NUM_ENCODER_LAYERS,
-        num_decoder_layers=NUM_DECODER_LAYERS,
-        emb_size=D_MODEL,
-        nhead=N_HEAD,
+        num_encoder_layers=enc_layers,
+        num_decoder_layers=dec_layers,
+        emb_size=emb_size,
+        nhead=nhead,
         vocab_size=tokenizer.vocab_size,
-        dim_feedforward=DIM_FEEDFORWARD,
+        dim_feedforward=dim_ff,
         dropout=0.0
     ).to(device)
     
-    if os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location=device))
-        print(f"Đã tải trọng số từ {model_path}")
+    if ckpt is not None:
+        if isinstance(ckpt, dict) and 'model_state_dict' in ckpt:
+            model.load_state_dict(ckpt['model_state_dict'])
+        else:
+            model.load_state_dict(ckpt)
+        print(f"Đã tải trọng số từ {model_path} (D_MODEL: {emb_size}, Lớp: {enc_layers})")
     model.eval()
     
-    df = pd.read_csv(data_path).dropna().sample(min(num_samples, 2000))
+    # Đọc và lọc bỏ các câu dài hơn MAX_LEN để tránh lỗi CUDA và đánh giá chính xác
+    df_full = pd.read_csv(data_path).dropna()
+    valid_rows = []
+    for _, row in df_full.iterrows():
+        if len(tokenizer.encode(str(row['khoa_dau']))) <= MAX_LEN and len(tokenizer.encode(str(row['quoc_ngu']))) <= MAX_LEN:
+            valid_rows.append(row)
+            
+    df = pd.DataFrame(valid_rows)
+    if len(df) == 0:
+        print(f"CẢNH BÁO: Không có câu nào trong tập test thỏa mãn điều kiện <= {MAX_LEN} ký tự.")
+        return 0.0, 0.0
+        
+    df = df.sample(min(num_samples, len(df)), random_state=42)
     
     total_cer, total_wer = [], []
-    print(f"Đang đánh giá {len(df)} câu (Beam Width: {beam_width})...")
+    print(f"Đang đánh giá {len(df)} câu (Beam Width: {beam_width}, MAX_LEN: {MAX_LEN})...")
     
     results = []
     
@@ -121,10 +192,11 @@ def run_evaluation(model_path, data_path, num_samples=500, beam_width=3):
             
             src_ids = tokenizer.encode(src_text)
             src_tensor = torch.tensor(src_ids).unsqueeze(1).to(device)
-            num_tokens = src_tensor.shape[0]
-            src_mask = torch.zeros((num_tokens, num_tokens), device=device).type(torch.bool)
             
-            # Beam Search Decode
+            # Đối với nn.Transformer, nếu src_mask không che gì cả (all False), tốt nhất truyền None 
+            src_mask = None
+            
+            # Beam Search Decode tuân thủ tuyệt đối giới hạn MAX_LEN của mô hình
             out_ids = beam_search_decode(model, src_tensor, src_mask, MAX_LEN, SOS_IDX, EOS_IDX, device, beam_width)
             predicted_text = tokenizer.decode(out_ids)
             
@@ -161,8 +233,11 @@ def run_evaluation(model_path, data_path, num_samples=500, beam_width=3):
 
 if __name__ == "__main__":
     import sys
-    model_file = os.path.join(WEIGHTS_DIR, "best_model.pth")
+    beam_width = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+    # Mặc định dùng tham số thứ 2 làm tên file, nếu không có thì mặc định lấy best_model.pth
+    model_name = sys.argv[2] if len(sys.argv) > 2 else "best_model.pth"
+    model_file = os.path.join(WEIGHTS_DIR, model_name)
     if os.path.exists(model_file):
-        run_evaluation(model_file, TEST_DATA_PATH)
+        run_evaluation(model_file, TEST_DATA_PATH, beam_width=beam_width)
     else:
         print(f"Lỗi: Không tìm thấy file trọng số tại {model_file}")

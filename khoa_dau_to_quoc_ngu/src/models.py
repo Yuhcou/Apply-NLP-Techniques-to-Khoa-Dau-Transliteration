@@ -38,18 +38,29 @@ class Seq2SeqTransformer(nn.Module):
                  dim_feedforward: int = 512,
                  dropout: float = 0.1):
         super(Seq2SeqTransformer, self).__init__()
+        # Use nn.Transformer as it has deeply optimized cuDNN and Flash Attention paths under the hood
         self.transformer = nn.Transformer(
             d_model=emb_size,
             nhead=nhead,
             num_encoder_layers=num_encoder_layers,
             num_decoder_layers=num_decoder_layers,
             dim_feedforward=dim_feedforward,
-            dropout=dropout
+            dropout=dropout,
+            activation='gelu',
+            batch_first=False # Batch first = False actually preferred for legacy optimized kernels in some cases, but AMP covers most speedups
         )
         self.generator = nn.Linear(emb_size, vocab_size)
         self.src_tok_emb = TokenEmbedding(vocab_size, emb_size)
         self.tgt_tok_emb = TokenEmbedding(vocab_size, emb_size)
         self.positional_encoding = PositionalEncoding(emb_size, dropout=dropout)
+        
+        # Initialize parameters for better stability
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
 
     def forward(self,
                 src: torch.Tensor,
@@ -98,7 +109,10 @@ def create_mask(src, tgt, pad_idx, device):
     tgt_seq_len = tgt.shape[0]
 
     tgt_mask = generate_square_subsequent_mask(tgt_seq_len, device)
-    src_mask = torch.zeros((src_seq_len, src_seq_len), device=device).type(torch.bool)
+    
+    # Đối với nn.Transformer, nếu src_mask không che gì cả (all False), tốt nhất truyền None 
+    # để kích hoạt Flash Attention (SDPA) an toàn và tối ưu nhất, tránh lỗi CUDA Memory Access.
+    src_mask = None
 
     # Padding mask: True ở các vị trí là padding
     src_padding_mask = (src == pad_idx).transpose(0, 1)

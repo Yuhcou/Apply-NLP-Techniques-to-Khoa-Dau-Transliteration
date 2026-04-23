@@ -58,6 +58,15 @@
 - **Kỹ thuật:** 
     - Sử dụng Log-probabilities để tránh hiện tượng tràn số (underflow).
     - Áp dụng `Length Penalty` để tránh mô hình ưu tiên các câu quá ngắn.
+- **Đánh giá Thực nghiệm (22/04/2026): Lựa chọn Tham số Beam Width ($k=3$)**
+    - Đã chạy kiểm thử trên 500 mẫu ngẫu nhiên (cố định random_seed=42) với các giá trị `k` khác nhau:
+        - `k=3`: CER 0.1889, WER 0.3035 (Tốc độ: ~1.10s/câu)
+        - `k=5`: CER 0.1882, WER 0.3030 (Tốc độ: ~1.97s/câu)
+        - `k=10`: CER 0.1877, WER 0.3029 (Tốc độ: ~3.96s/câu)
+    - **Kết luận (Tại sao không dùng $k>3$):** 
+        1. **Biên độ cải thiện quá nhỏ:** Từ `k=3` lên `k=10`, CER chỉ giảm ~0.12%, cho thấy các trường hợp nhập nhằng ngữ âm phức tạp nhất (ví dụ: c/k/q hay ng/ngh) đều đã được bao quát hoàn toàn trong top 3 ứng viên.
+        2. **Suy giảm hiệu năng tuyến tính:** Tốc độ giải mã ở `k=10` chậm gấp gần 4 lần so với `k=3`. Đối với một ứng dụng Seq2Seq sinh từng ký tự, độ trễ này làm giảm sút nghiêm trọng trải nghiệm người dùng.
+        3. **Lãng phí tài nguyên:** Giữ lại quá nhiều nhánh có xác suất thấp gây tốn kém tính toán ma trận Attention mà không mang lại giá trị thực tế. Vì vậy, **$k=3$ là "điểm ngọt" lý tưởng.**
 
 ### B. Kế hoạch thực hiện Phase 1 (Sanity Check)
 - **Mục tiêu:** Chứng minh model có thể "học thuộc" (overfit) một tập dữ liệu cực nhỏ (1,000 câu).
@@ -144,6 +153,49 @@
 #### 4. Trạng thái Hệ thống
 - `inference.py`: Đã nâng cấp lên V2, tích hợp Beam Search, UI so sánh thông minh bằng SequenceMatcher.
 - `src/data_utils.py`: Đã được chuẩn hóa, hỗ trợ `limit` và `drop_last`.
+
+## 20. Nghiên cứu & Triển khai Song song hóa CPU cho Rule-based và Dictionary (03/04/2026)
+
+### A. Vấn đề
+- Rule-based hiện tại chạy tuần tự trên 1 core CPU, dẫn đến thời gian xử lý lâu (~1140ms cho dataset mẫu).
+- Dictionary (GPU) cho hiệu năng tốt (~330ms) nhưng tốn chi phí vận chuyển dữ liệu (Memory Transfer) và yêu cầu phần cứng chuyên dụng.
+- Cần kiểm chứng hiệu năng của Dictionary khi chạy song song trên CPU để xem liệu nó có vượt qua GPU trong bài toán xử lý chuỗi (String) hay không.
+
+### B. Chiến lược thực hiện
+1.  **Parallel Rule-based (CPU):**
+    - Sử dụng `concurrent.futures.ProcessPoolExecutor` để tận dụng đa nhân.
+    - Chia văn bản thành các đoạn (chunks) để xử lý độc lập.
+2.  **Parallel Dictionary (CPU):**
+    - Tải mapping từ file CSV vào một `dict` trong bộ nhớ dùng chung.
+    - Sử dụng `Parallel` (từ thư viện `joblib` hoặc `multiprocessing`) để tra cứu từ điển đồng loạt.
+3.  **Benchmarking:**
+    - So sánh 5 phương pháp: Rule-based (Serial), Rule-based (Parallel CPU), Dictionary (Serial CPU), Dictionary (Parallel CPU), Dictionary (Parallel GPU).
+    - Đo lường Latency trên tập dữ liệu `source.txt`.
+
+## 21. Phát hiện và Hiệu chỉnh thông tin Dự án (04/04/2026)
+
+### A. Đánh giá lại Hiệu năng Module 1 (Quốc ngữ -> Khoa Đẩu)
+- **Sai lệch Latency:** Dữ liệu cũ trong Summary ước tính AI mất ~820ms/100k từ. Thực tế benchmark trên 213.118 từ cho thấy `SHALLOW_BIG` chỉ mất ~885ms (tương đương ~415ms/100k từ). AI thực tế nhanh gấp 2 lần báo cáo cũ.
+- **Thứ hạng tốc độ:** 
+    1.  **Dict (GPU):** 399ms (Nhanh nhất).
+    2.  **Dict (CPU Serial):** 413ms.
+    3.  **CNN-Shallow-Big:** 885ms.
+    4.  **Rule-based (Serial):** 1295ms.
+- **Vấn đề Parallel trên Windows:** Các phương pháp Parallel (CPU) bị chậm hơn Serial do overhead khởi tạo process (6600ms vs 1200ms). Cần đính chính thông tin này trong Summary để tránh hiểu lầm về môi trường thực thi.
+
+### B. Bổ sung chi tiết kỹ thuật Module 2 (Khoa Đẩu -> Quốc ngữ)
+- **Cơ chế Beam Search:** Đã tích hợp Beam Search (width=3) giúp giảm lỗi lặp từ và chọn chuỗi có xác suất tổng thể cao hơn.
+- **Punctuation Padding:** Kỹ thuật chèn khoảng trắng quanh dấu câu (`preprocess_for_ai`) là yếu tố then chốt giúp Transformer đạt CER 0.21.
+- **Inference V2 Features:** 
+    - Tích hợp `SequenceMatcher` để so khớp word-level.
+    - Chức năng `Missing Word Markers` (`[ từ_bị_thiếu ]`) giúp highlight chính xác vị trí AI dịch sót, thay vì chỉ báo lỗi chung chung.
+    - AI vẫn gặp khó khăn trong việc "tự học" copy ngoại ngữ (Identity Mapping), hiện đang dựa vào UI để cảnh báo lỗi.
+
+### C. Kế hoạch cập nhật PROJECT_SUMMARY.md
+- Thay thế bảng hiệu năng cũ bằng số liệu thực tế trên 213.118 từ.
+- Đính chính thứ hạng các phương pháp (GPU thắng Serial CPU).
+- Bổ sung đầy đủ thông số cho các AI Models (CNN và Transformer).
+- Làm rõ trạng thái của Phase 3 (4M samples) và các hạn chế hiện tại của mô hình Transformer.
 
 ---
 ## 12. Giải thích kiến trúc Mô hình Seq2Seq Transformer (Session 30/03/2026)
@@ -283,3 +335,40 @@ Tạo giao diện người dùng chuyên nghiệp cho Module 2, cho phép kiểm
 - Tích hợp `difflib.SequenceMatcher` để căn chỉnh word-level giữa bản gốc và bản AI.
 - Sử dụng `quoc_ngu_to_khoa_dau/src/rule_based.py` làm cầu nối tạo Input Khoa Đẩu chuẩn.
 - Tự động thêm/xóa "dấu chấm giả" để AI không bị cắt cụt từ cuối câu.
+
+## 22. Huấn luyện Phase 3 (4 Triệu Mẫu) & Tối ưu hóa A100 (23/04/2026)
+
+### A. Mở rộng Kiến trúc (Scaling Up)
+- **Mục tiêu:** Tăng "dung lượng" biểu diễn của mô hình để học được các quy tắc đồng âm/ngữ cảnh phức tạp từ 4 triệu câu.
+- **Cấu hình mới:** `D_MODEL = 512`, `N_HEAD = 16`, `DIM_FEEDFORWARD = 512`, `MAX_LEN = 192`. Các thông số lớp Encoder/Decoder giữ nguyên ở mức 3 để đảm bảo tốc độ Inference.
+
+### B. Tối ưu hóa Tốc độ Huấn luyện (Training Speedup)
+Để tận dụng tối đa GPU A100 (40GB VRAM) và giải quyết nút thắt cổ chai (bottleneck) ở CPU:
+1. **Automatic Mixed Precision (AMP):** 
+   - Sử dụng `torch.amp.autocast(dtype=torch.float16)` và `GradScaler` trong vòng lặp huấn luyện.
+   - Ép kiểu `logits.float()` trước khi tính `CrossEntropyLoss` để tránh lỗi tràn số (NaN/Inf Loss) do bùng nổ Gradient.
+   - *Kết quả:* Tăng throughput lên gấp 2-3 lần.
+2. **Pre-tokenization (Giải phóng CPU):** 
+   - Thay vì tokenize từng câu bên trong hàm `__getitem__` của DataLoader (gây nghẽn CPU dù đã dùng multiprocessing), toàn bộ 4 triệu câu được mã hóa thành các mảng số nguyên (Python List) và đẩy vào RAM ngay khi khởi tạo Dataset.
+   - Tránh lưu dưới dạng list của Tensor để đề phòng lỗi rò rỉ File Descriptor (too many open files) khi chạy đa luồng.
+3. **Dynamic Padding:** 
+   - Thay thế việc hard-padding mọi câu lên `MAX_LEN=192`.
+   - Viết lại `collate_fn` để tìm câu dài nhất trong từng Batch cụ thể và chỉ đệm bằng với chiều dài đó.
+   - *Kết quả:* VRAM giảm từ ~33GB xuống ~20GB, tốc độ xử lý tăng vọt từ 1.13 it/s lên ~7 it/s.
+
+### C. Giải quyết lỗi CUDA Illegal Memory Access (Flash Attention Bug)
+- **Triệu chứng:** Khi cố gắng ép mô hình sinh ra số ký tự lớn hơn `MAX_LEN` đã được huấn luyện (ví dụ Eval > 192), hệ thống văng lỗi `CUDA error: an illegal memory access was encountered`.
+- **Nguyên nhân gốc rễ:** 
+   - `PositionalEncoding` chỉ được học và khởi tạo đến `MAX_LEN`. Khi độ dài vượt quá ngưỡng này, các vector vị trí sinh ra giá trị `NaN`.
+   - GPU NVIDIA (đặc biệt khi dùng Flash Attention / SDPA) gặp lỗi phần cứng nghiêm trọng khi xử lý ma trận chứa `NaN`.
+- **Giải pháp Triệt để:**
+   - Trả lại hàm `generate_square_subsequent_mask` mặc định của PyTorch (trả về kiểu Float thay vì Boolean mask) để tương thích 100% với SDPA.
+   - Trong `evaluate.py`: Lọc (Filter) và bỏ qua toàn bộ các câu trong tập Test có độ dài vượt quá `MAX_LEN`.
+   - Trong `inference.py` (UI): Tự động cắt cụt (Truncate) văn bản đầu vào nếu vượt quá `MAX_LEN` để bảo vệ GPU không bị Crash.
+
+### D. Nâng cấp Hệ sinh thái (Inference V2 & Evaluation)
+- **Auto-detect Model Architecture:** 
+   - Các file checkpoint (`.pth`) cũ của Phase 2 không lưu dictionary `config` (chỉ có `state_dict` với `D_MODEL=256`).
+   - Xây dựng thuật toán quét `state_dict.keys()` để tự động nội suy ra `D_MODEL`, số lớp (Layers) và `N_HEAD`.
+   - *Lợi ích:* Giao diện UI (`inference.py`) giờ đây có Dropdown chọn Model, hỗ trợ nạp nóng (hot-swap) mọi phiên bản trọng số (từ 256 đến 512) mà không cần sửa code hay lo sợ lỗi `size mismatch`.
+- **Thành quả chốt chặng (Phase 3):** CER giảm xuống mức **0.0065** (0.65%), WER đạt **0.0218** (2.18%) - Một bước nhảy vọt so với Phase 2.

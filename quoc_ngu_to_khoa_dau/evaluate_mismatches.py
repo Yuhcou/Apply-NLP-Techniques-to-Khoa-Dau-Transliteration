@@ -18,7 +18,7 @@ class ModelMismatchEvaluator:
         self.qn_vocab = vocab_data['qn']
         self.kd_vocab = vocab_data['kd']
         self.rev_kd_vocab = {v: k for k, v in self.kd_vocab.items()}
-        self.device = torch.device("cuda" if torch.available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # Load all syllables
         with open(SYLLABLES_PLAIN_PATH, 'r', encoding='utf-8') as f:
